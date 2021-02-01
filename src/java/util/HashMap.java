@@ -333,9 +333,22 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      * cheapest possible way to reduce systematic lossage, as well as
      * to incorporate impact of the highest bits that would otherwise
      * never be used in index calculations because of table bounds.
+     *
+     *
+     * 问题1：为什么数组长度用2的幂次方？------->为了减少hash冲突，将元素均匀分布到数组的各个位置
+     * 因为当长度为2的幂次方时，n-1得到的数字在进行运算时往往是11111这种，当在(n-1)&hash计算元素位置时
+     * 结果完全取决于hash值，只要hash值够随机，元素就可以均匀到每一个数组位置
+     *
+     * 问题2：为什么要hashcode右移16位后进行位异或？-----> 要让hash值更加随机，从而使得元素位置雨露均沾
+     * 因为在计算元素位置算法：(n-1)&hash 元素的位置取决于hash值的低16位
+     * 如果直接用hashcode与数组长度n-1进行与运算【&】，hashcode的低16位不够随机
+     * 所以利用h>>>获取到hashcode的高16位，然后与hashcode进行位异或【^】,这样的到的hash值更加散列
+     * 从而计算到的元素位置也更加雨露均沾
+     *
      */
     static final int hash(Object key) {
         int h;
+        // key的哈希值 异或 哈希值右移16位
         return (key == null) ? 0 : (h = key.hashCode()) ^ (h >>> 16);
     }
 
@@ -554,6 +567,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      */
     public V get(Object key) {
         Node<K,V> e;
+        // 如果为空返回null，否则返回value
         return (e = getNode(hash(key), key)) == null ? null : e.value;
     }
 
@@ -566,14 +580,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      */
     final Node<K,V> getNode(int hash, Object key) {
         Node<K,V>[] tab; Node<K,V> first, e; int n; K k;
+        // Entry数组不为空，当前key存在
         if ((tab = table) != null && (n = tab.length) > 0 &&
             (first = tab[(n - 1) & hash]) != null) {
+            // 当前entry对象的key值相同，hash相同，直接返回--->已找到！！
             if (first.hash == hash && // always check first node
                 ((k = first.key) == key || (key != null && key.equals(k))))
                 return first;
+            //链表下一个entry不为空
             if ((e = first.next) != null) {
                 if (first instanceof TreeNode)
                     return ((TreeNode<K,V>)first).getTreeNode(hash, key);
+                // 循环找是否有当前entry对象e的key值相同，hash相同
                 do {
                     if (e.hash == hash &&
                         ((k = e.key) == key || (key != null && key.equals(k))))
@@ -624,13 +642,21 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      */
     final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
                    boolean evict) {
-        Node<K,V>[] tab; Node<K,V> p; int n, i;
+        // 当前Entry数组
+        Node<K,V>[] tab;
+        // 当前Entry
+        Node<K,V> p;
+        // n:当前Entry数组长度，i:待插入元素的下标位置
+        int n, i;
+        // 数组是否为空，数组长度是否为0，否则进行初始化resize
         if ((tab = table) == null || (n = tab.length) == 0)
             n = (tab = resize()).length;
+        // 该位置是否为空，为空直接插入，i = (n - 1) & hash
         if ((p = tab[i = (n - 1) & hash]) == null)
             tab[i] = newNode(hash, key, value, null);
         else {
             Node<K,V> e; K k;
+            // 待插入元素key是否相同,相同则:TODO
             if (p.hash == hash &&
                 ((k = p.key) == key || (key != null && key.equals(k))))
                 e = p;
@@ -638,27 +664,35 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                 e = ((TreeNode<K,V>)p).putTreeVal(this, tab, hash, key, value);
             else {
                 for (int binCount = 0; ; ++binCount) {
+                    // 当前Entry所在链表的下...下一个元素是否为空，为空则直接插入
                     if ((e = p.next) == null) {
                         p.next = newNode(hash, key, value, null);
+                        //当前链表长度是否超过8:TODO
                         if (binCount >= TREEIFY_THRESHOLD - 1) // -1 for 1st
                             treeifyBin(tab, hash);
                         break;
                     }
+                    // 前Entry所在链表的下...下一个元素不为空，判断与待插入元素key是否相同,相同则break
                     if (e.hash == hash &&
                         ((k = e.key) == key || (key != null && key.equals(k))))
                         break;
+                    // 该位置元素不为空，且与待插入元素不同，以当前元素e为起点p继续往下循环找
                     p = e;
                 }
             }
             if (e != null) { // existing mapping for key
                 V oldValue = e.value;
+                // 是否覆盖当前值，当前为空等于覆盖
                 if (!onlyIfAbsent || oldValue == null)
                     e.value = value;
                 afterNodeAccess(e);
                 return oldValue;
             }
         }
+        // 在迭代器初始化过程中会将这个值赋给迭代器的 expectedModCount。
+        // 在迭代过程中，判断 modCount 跟 expectedModCount 是否相等，如果不相等就表示已经有其他线程修改了 Map
         ++modCount;
+        // 是否超长需要扩容
         if (++size > threshold)
             resize();
         afterNodeInsertion(evict);
@@ -675,22 +709,31 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      * @return the table
      */
     final Node<K,V>[] resize() {
+        // 将待扩容数组复制出来
         Node<K,V>[] oldTab = table;
+        // 获取待扩容数组的原始长度
         int oldCap = (oldTab == null) ? 0 : oldTab.length;
+        // 获取待扩容数组的阈值
         int oldThr = threshold;
         int newCap, newThr = 0;
+        // 原数组中有数据->扩容
         if (oldCap > 0) {
             if (oldCap >= MAXIMUM_CAPACITY) {
                 threshold = Integer.MAX_VALUE;
                 return oldTab;
             }
+            // 新数组容量扩容一倍，oldCap*(2^1)
             else if ((newCap = oldCap << 1) < MAXIMUM_CAPACITY &&
                      oldCap >= DEFAULT_INITIAL_CAPACITY)
+                // 新数组阈值扩容一倍
                 newThr = oldThr << 1; // double threshold
         }
+        // 原数组中为空，并且阈值已初始化完毕
         else if (oldThr > 0) // initial capacity was placed in threshold
+            // 初始化数组大小为阈值
             newCap = oldThr;
         else {               // zero initial threshold signifies using defaults
+            // 新数组，第一次初始化（第一次put），容量16，阈值12
             newCap = DEFAULT_INITIAL_CAPACITY;
             newThr = (int)(DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY);
         }
@@ -704,15 +747,19 @@ public class HashMap<K,V> extends AbstractMap<K,V>
             Node<K,V>[] newTab = (Node<K,V>[])new Node[newCap];
         table = newTab;
         if (oldTab != null) {
+            // 将待扩容数组，重新计算元素位置放入新数组中
             for (int j = 0; j < oldCap; ++j) {
                 Node<K,V> e;
                 if ((e = oldTab[j]) != null) {
                     oldTab[j] = null;
                     if (e.next == null)
+                        // 原数组中该entry下无链表，重新计算元素位置，直接放入元素
                         newTab[e.hash & (newCap - 1)] = e;
                     else if (e instanceof TreeNode)
+                        // 原数组中该entry下为红黑树
                         ((TreeNode<K,V>)e).split(this, newTab, j, oldCap);
                     else { // preserve order
+                        // 原数组中该entry下为链表
                         Node<K,V> loHead = null, loTail = null;
                         Node<K,V> hiHead = null, hiTail = null;
                         Node<K,V> next;
